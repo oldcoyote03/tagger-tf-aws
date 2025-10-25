@@ -7,12 +7,13 @@ Key facts (from repo + user):
 - The application is a Python Flask app packaged as a Docker image and pushed to Docker Hub.
 - Terraform is used to deploy the container image to AWS Lambda (container image support).
 - Credentials, Docker image tags, and Terraform state are not present in the repo and must be provided by a human operator.
+ - The Flask application source code lives in a separate repository; this repo is responsible only for infrastructure and deploying the prebuilt image.
 
 Clarification: the Docker image is already built and hosted on Docker Hub. This repository's Terraform should reference and pull that remote image (for example, `docker.io/<user>/<repo>:<tag>`). The repo does not need to build the image locally unless the maintainer asks for that flow.
 
 What to do first (high-value steps):
-1. Look for Terraform (*.tf) files in the workspace. If no `Dockerfile` exists (likely, because the image is prebuilt), confirm the Terraform module path and the exact Docker Hub image name/tag the Terraform should reference.
-2. Ask for the Docker Hub image full name (example: `dockerhub-user/myapp:1.2.3`) and the AWS account/region where resources should be created.
+1. Confirm this repo is Terraform-only (no application source). Look for `*.tf` files and identify where the image is referenced (for example `image_uri`, `container_image`, or module inputs).
+2. Ask for the Docker Hub image full name (example: `dockerhub-user/myapp:1.2.3`) and the AWS account/region where resources should be created. Prefer documenting the image in variables (`docker_image` / `docker_tag`).
 3. Do not attempt to create or use real AWS credentials. Provide reproducible local commands the maintainer can run.
 
 Concrete patterns and file references:
@@ -22,6 +23,7 @@ Concrete patterns and file references:
 
 Repository variable names:
 - This project declares `variable "docker_image"` and `variable "docker_tag"` in `variables.tf`. Use `${var.docker_image}:${var.docker_tag}` when referencing the full image in Terraform resources (for example `image_uri = "${var.docker_image}:${var.docker_tag}"`).
+- This repository also provides optional ECR-related variables to help CI construct the ECR repo URL or to parameterize the example Terraform. These are declared in `variables.tf` as `ecr_account` and `ecr_repo_name`. The example `examples/ecr-deploy.tf` uses `var.ecr_repo_name` for the repository name and outputs the created `repository_url`; CI can also construct a repo URL from `ecr_account` and the repository's region (by default `var.aws_region`) if you populate them in `terraform.tfvars`.
 
 Testing and debugging tips specific to this repo:
 - Run the Flask image locally (optional) to validate behavior before deployment (if you want to pull the image locally first):
@@ -80,5 +82,31 @@ Sensitive variables and secrets:
 
 How to request persistent edits to this file:
 - If you supply new assumptions in chat (for example, a concrete Docker image URI), I'll use them for guidance immediately but I will not persist them to this file without your confirmation. Ask me to "propose edit" to see a diff, then reply "apply" to commit the change.
+
+Simplicity note:
+- This Terraform repository's job is to adapt the prebuilt Flask container to run on Lambda. Keep the repo small: reference the prebuilt image, set up IAM/roles/logging, and configure Lambda/ECR/EFS/etc as needed. Avoid adding build/push workflows or copying app source into this repo unless you have a specific reason to centralize builds here.
+
+Lambda Web Adapter approach:
+- If you plan to adapt the Flask app to Lambda using a web-adapter (for example, a WSGI/ASGI-to-Lambda shim or AWS's provided runtime adapter), document that in the instructions and validate the prebuilt image for the following:
+	- Server interface: confirm the app exposes a WSGI or ASGI entrypoint compatible with the chosen adapter (for Flask, WSGI is typical).
+	- Startup command / CMD in the image: ensure the container can start the adapter or that the adapter is present in the runtime image.
+	- Port: adapters typically expect the application to listen on a port (commonly 8080). Confirm the image exposes the expected port or that the adapter will bind correctly in Lambda's container environment.
+	- Health endpoint: a `/health` or similar endpoint is useful for smoke tests and local validation.
+		- Also verify the adapter bootstrap location and permissions (for example `/opt/bootstrap` is present and executable) and that the final image `ENTRYPOINT` points to it; prefer configuring adapter settings at runtime via Terraform environment variables (see `adapter_port` / `adapter_log_level` in `terraform.tfvars.example`) unless you explicitly need build-time args.
+
+- Terraform notes for Lambda container images:
+	- Use `aws_lambda_function` with `package_type = "Image"` and set `image_uri = "${var.docker_image}:${var.docker_tag}"`.
+	- Tune `memory_size` and `timeout` for cold-start and adapter overhead; larger memory often reduces cold-start latency.
+	- Ensure the Lambda's execution role has necessary permissions for logging (CloudWatch) and any AWS services the app uses.
+	- If the adapter requires environment variables (for example, adapter mode or logging level), include them via `environment` in the `aws_lambda_function` resource and document them in `terraform.tfvars.example`.
+
+	Adapter environment variables example:
+	- We recommend exposing adapter settings via Lambda environment variables. Example entries for `terraform.tfvars.example`:
+
+	```hcl
+	# adapter settings
+	adapter_port      = 8080
+	adapter_log_level = "info"
+	```
 
 End of instructions.

@@ -2,3 +2,15 @@
 
 docker_image = "docker.io/exampleuser/example-repo"
 docker_tag   = "0.0.1"
+
+# Adapter-related environment variables (used by Lambda environment block)
+adapter_port      = 8080
+adapter_log_level = "info"
+
+# Optional: ECR configuration (use when building/pushing wrapper image to ECR)
+# If you centralize ECR config in terraform variables, CI can construct the full ECR repo URL from these values.
+ecr_account   = "123456789012"
+# ecr_region is no longer required; examples use var.aws_region by default
+ecr_repo_name = "flask-api-lambda"
+# optional (convenience): full repo URL
+# ecr_repo_url = "123456789012.dkr.ecr.us-east-1.amazonaws.com/flask-api-lambda"
